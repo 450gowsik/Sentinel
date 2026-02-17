@@ -1,10 +1,10 @@
-# 🌊 PRAVAHA - AI-Based Crowd Management System
+# 🌊 SENTINEL - AI-Based Crowd Management System
 
 **Perception Layer Complete ✅ (Phases 1-4)**
 
 ## 🎯 Project Overview
 
-PRAVAHA is an AI-powered crowd management system designed for Indian venues (temples, festivals, railway stations) to prevent stampedes through predictive analysis. This system processes post-event video footage to identify risks and provide insights.
+SENTINEL is an AI-powered crowd management system designed for Indian venues (temples, festivals, railway stations) to prevent stampedes through predictive analysis. This system processes post-event video footage to identify risks and provide insights.
 
 **Target Hardware:** NVIDIA RTX 3050 6GB  
 **Processing Mode:** Post-event video analysis  
