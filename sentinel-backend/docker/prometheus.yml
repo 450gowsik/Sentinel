@@ -1,0 +1,11 @@
+# Prometheus scrape config for SENTINEL
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "sentinel-api"
+    static_configs:
+      - targets: ["sentinel-api:8000"]
+    metrics_path: /metrics
+    scrape_interval: 5s
