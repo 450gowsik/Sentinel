@@ -1,0 +1,50 @@
+# ============================================================
+# SENTINEL (PRAVAHA) — Backend Dependencies
+# RTX 3050 6GB · CUDA 11.8 · Python 3.10+
+# ============================================================
+
+# --- Core Framework ---
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+python-multipart>=0.0.6
+
+# --- PyTorch + CUDA 11.8 ---
+# Install separately:
+#   pip install torch==2.1.0+cu118 torchvision==0.16.0+cu118 \
+#       --index-url https://download.pytorch.org/whl/cu118
+torch>=2.1.0
+torchvision>=0.16.0
+
+# --- Computer Vision & Detection ---
+ultralytics>=8.1.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+scipy>=1.11.0
+
+# --- TensorRT (install via NVIDIA) ---
+# pip install tensorrt --extra-index-url https://pypi.nvidia.com
+onnxruntime-gpu>=1.16.0
+
+# --- Data & Events ---
+redis[hiredis]>=5.0.0
+asyncpg>=0.29.0
+sqlalchemy[asyncio]>=2.0.0
+influxdb-client[async]>=1.38.0
+motor>=3.3.2
+pymongo>=4.6.1
+
+# --- Config & Validation ---
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.0
+
+# --- Observability ---
+prometheus-client>=0.19.0
+prometheus-fastapi-instrumentator>=6.1.0
+structlog>=23.2.0
+
+# --- Utilities ---
+pillow>=10.0.0
+aiofiles>=23.2.0
+orjson>=3.9.0
