@@ -43,19 +43,22 @@ class DetectionStage(PipelineStage):
 
         trt_path = self.settings.yolo_model_path if self.settings else "models/yolov8n.engine"
 
-        # Try TensorRT first
-        try:
-            from app.engine.trt_loader import TRTEngine
-            engine = TRTEngine.load(trt_path, device=self.gpu.device_id if self.gpu else 0)
-            if engine.ready:
-                self._model = engine
-                self._is_trt = True
-                if self.gpu:
-                    await self.gpu.register_model("yolov8n_trt", engine)
-                logger.info("detection.trt_loaded", path=trt_path)
-                return
-        except Exception as exc:
-            logger.warning("detection.trt_failed", error=str(exc))
+        # Try TensorRT relative to setting
+        if self.settings and not self.settings.enable_tensorrt:
+            logger.info("detection.trt_skipped_by_config")
+        else:
+            try:
+                from app.engine.trt_loader import TRTEngine
+                engine = TRTEngine.load(trt_path, device=self.gpu.device_id if self.gpu else 0)
+                if engine.ready:
+                    self._model = engine
+                    self._is_trt = True
+                    if self.gpu:
+                        await self.gpu.register_model("yolov8n_trt", engine)
+                    logger.info("detection.trt_loaded", path=trt_path)
+                    return
+            except Exception as exc:
+                logger.warning("detection.trt_failed", error=str(exc))
 
         # Fallback: Ultralytics
         try:

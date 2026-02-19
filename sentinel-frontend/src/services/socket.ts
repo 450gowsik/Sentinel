@@ -22,6 +22,8 @@ export type StreamMessage = {
         tracks: number;
         fps: number;
         flow_magnitude: number;
+        pressure: number;
+        collisions: Array<{ x: number, y: number, force: number, label: string }>;
     };
 };
 

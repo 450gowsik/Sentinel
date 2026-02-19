@@ -1,10 +1,30 @@
-import { Scan, Radio, Wifi, WifiOff } from 'lucide-react';
+import { Scan, Radio, Wifi, WifiOff, Settings, X, Save } from 'lucide-react';
 import { useDashboardStore } from '../store/useDashboardStore';
+import { useState } from 'react';
+import { streamApi } from '../services/api';
 
 export default function LiveFeedContainer() {
     const liveFrame = useDashboardStore((s) => s.liveFrame);
     const backendConnected = useDashboardStore((s) => s.backendConnected);
     const liveMetrics = useDashboardStore((s) => s.liveMetrics);
+
+    const [showConfig, setShowConfig] = useState(false);
+    const [cameraUrl, setCameraUrl] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+
+    const handleSaveConfig = async () => {
+        if (!cameraUrl) return;
+        setIsSaving(true);
+        try {
+            await streamApi.configure(cameraUrl);
+            setShowConfig(false);
+            setCameraUrl('');
+        } catch (error) {
+            console.error('Failed to update camera source:', error);
+        } finally {
+            setIsSaving(false);
+        }
+    };
 
     return (
         <div className="glass-card overflow-hidden relative group">
@@ -18,8 +38,8 @@ export default function LiveFeedContainer() {
                 <div className="flex items-center gap-2">
                     {/* Connection status */}
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider flex items-center gap-1 ${backendConnected
-                            ? 'bg-success/15 text-success'
-                            : 'bg-warning/15 text-warning'
+                        ? 'bg-success/15 text-success'
+                        : 'bg-warning/15 text-warning'
                         }`}>
                         {backendConnected ? (
                             <><Wifi size={10} /> LIVE</>
@@ -30,6 +50,13 @@ export default function LiveFeedContainer() {
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-danger/15 text-danger font-bold tracking-wider">
                         ● REC
                     </span>
+                    <button
+                        onClick={() => setShowConfig(true)}
+                        className="p-1 hover:bg-white/10 rounded transition-colors"
+                        title="Configure Camera Source"
+                    >
+                        <Settings size={14} className="text-text-muted hover:text-text-primary" />
+                    </button>
                     <Scan size={14} className="text-text-muted" />
                 </div>
             </div>
@@ -109,7 +136,7 @@ export default function LiveFeedContainer() {
                                 <span>FPS: {liveMetrics.fps.toFixed(1)} | Latency: {liveMetrics.latencyMs.toFixed(0)}ms</span>
                                 <span>Persons: {liveMetrics.personCount} | Tracks: {liveMetrics.trackCount}</span>
                                 <span className={`font-bold ${liveMetrics.riskLevel === 'CRITICAL' ? 'text-danger' :
-                                        liveMetrics.riskLevel === 'HIGH' ? 'text-warning' : 'text-success'
+                                    liveMetrics.riskLevel === 'HIGH' ? 'text-warning' : 'text-success'
                                     }`}>
                                     Risk: {liveMetrics.riskLevel} ({(liveMetrics.riskScore * 100).toFixed(0)}%)
                                 </span>
@@ -123,6 +150,59 @@ export default function LiveFeedContainer() {
                         )}
                     </div>
                 </div>
+
+                {/* Configuration Modal */}
+                {showConfig && (
+                    <div className="absolute inset-0 bg-bg-primary/95 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+                        <div className="w-full max-w-sm">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-sm font-bold text-text-primary flex items-center gap-2">
+                                    <Settings size={14} className="text-brand-primary" />
+                                    Camera Source
+                                </h3>
+                                <button
+                                    onClick={() => setShowConfig(false)}
+                                    className="text-text-muted hover:text-text-primary"
+                                >
+                                    <X size={14} />
+                                </button>
+                            </div>
+
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="block text-[10px] text-text-muted uppercase tracking-wider font-bold mb-1.5">
+                                        RTSP / HTTP Stream URL
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={cameraUrl}
+                                        onChange={(e) => setCameraUrl(e.target.value)}
+                                        placeholder="e.g. http://192.168.1.5:8080/video"
+                                        className="w-full bg-bg-secondary border border-border rounded px-3 py-2 text-xs text-text-primary placeholder:text-text-muted/50 focus:outline-none focus:border-brand-primary/50 transition-colors"
+                                    />
+                                    <p className="text-[10px] text-text-muted mt-1.5 leading-relaxed">
+                                        For mobile: Use "IP Webcam" app (Android) and enter the video URL (usually ends in /video).
+                                    </p>
+                                </div>
+                                <div className="flex gap-2 pt-2">
+                                    <button
+                                        onClick={() => setCameraUrl('0')}
+                                        className="flex-1 bg-bg-secondary hover:bg-white/5 border border-border text-text-muted hover:text-text-primary text-xs py-2 rounded transition-colors"
+                                    >
+                                        Reset to Default
+                                    </button>
+                                    <button
+                                        onClick={handleSaveConfig}
+                                        disabled={!cameraUrl || isSaving}
+                                        className="flex-1 bg-brand-primary hover:bg-brand-primary/90 text-bg-primary font-bold text-xs py-2 rounded transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {isSaving ? 'Connecting...' : <><Save size={12} /> Connect Stream</>}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
 
             <style>{`

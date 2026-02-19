@@ -1,20 +1,80 @@
-import { ShieldAlert, MapPin } from 'lucide-react';
+import { ShieldAlert, Loader2 } from 'lucide-react';
 import RiskCard from '../components/RiskCard';
 import CrowdFlowVisualization from '../features/flow/CrowdFlowVisualization';
-import { generateRiskCards } from '../services/mockData';
 import { useState, useEffect } from 'react';
 import type { RiskCardData } from '../types';
+import { metricsApi } from '../services/api';
 
 export default function RiskIntelligence() {
     const [riskCards, setRiskCards] = useState<RiskCardData[]>([]);
+    const [overallRisk, setOverallRisk] = useState({ score: 0, level: 'LOW' });
+    const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        setRiskCards(generateRiskCards());
-        const interval = setInterval(() => {
-            setRiskCards(generateRiskCards());
-        }, 10000);
+        const fetchMetrics = async () => {
+            try {
+                const data: any = await metricsApi.getLive();
+                setOverallRisk({ score: data.risk_score, level: data.risk_level });
+
+                // Map backend metrics to Risk Cards
+                const cards: RiskCardData[] = [
+                    {
+                        id: 'stampede',
+                        title: 'Stampede Risk',
+                        severity: data.risk_level.toLowerCase() as any,
+                        value: Math.round(data.risk_score * 100),
+                        maxValue: 100,
+                        recommendation: data.risk_score > 0.7 ? 'Open auxiliary gates to reduce directional pressure' : 'Continue monitoring — no immediate action required',
+                        trend: Array.from({ length: 10 }, () => Math.random() * 20 + data.risk_score * 80),
+                        zone: 'Primary Monitoring Zone',
+                    },
+                    {
+                        id: 'chokepoint',
+                        title: 'Choke Point Analysis',
+                        severity: data.congestion_score > 0.8 ? 'critical' : data.congestion_score > 0.5 ? 'high' : 'medium',
+                        value: Math.round(data.congestion_score * 100),
+                        maxValue: 100,
+                        recommendation: data.congestion_score > 0.6 ? 'Deploy crowd marshals to identified hotspots' : 'Normal flow maintained at known choke points',
+                        trend: Array.from({ length: 10 }, () => Math.random() * 20 + data.congestion_score * 80),
+                        zone: 'Primary Monitoring Zone',
+                    },
+                    {
+                        id: 'anomaly',
+                        title: 'Behaviour Anomaly',
+                        severity: data.anomaly_score > 0.7 ? 'high' : 'low',
+                        value: Math.round(data.anomaly_score * 100),
+                        maxValue: 100,
+                        recommendation: data.anomaly_score > 0.5 ? 'Investigate unusual group formation' : 'No significant behavioural anomalies detected',
+                        trend: Array.from({ length: 10 }, () => Math.random() * 10 + data.anomaly_score * 90),
+                        zone: 'Primary Monitoring Zone',
+                    },
+                    {
+                        id: 'flow',
+                        title: 'Flow Dynamics',
+                        severity: data.avg_flow_magnitude > 5 ? 'high' : 'medium',
+                        value: Math.min(100, Math.round(data.avg_flow_magnitude * 10)),
+                        maxValue: 100,
+                        recommendation: 'Monitor directional turbulence at intersections',
+                        trend: Array.from({ length: 10 }, () => Math.random() * 30 + data.avg_flow_magnitude * 5),
+                        zone: 'Primary Monitoring Zone',
+                    }
+                ];
+
+                setRiskCards(cards);
+                setIsLoading(false);
+            } catch (error) {
+                console.error('Failed to fetch metrics:', error);
+            }
+        };
+
+        fetchMetrics();
+        const interval = setInterval(fetchMetrics, 3000);
         return () => clearInterval(interval);
     }, []);
+
+    const riskColor = overallRisk.level === 'CRITICAL' ? 'text-danger' :
+        overallRisk.level === 'HIGH' ? 'text-danger' :
+            overallRisk.level === 'MEDIUM' ? 'text-warning' : 'text-success';
 
     return (
         <div className="h-full flex flex-col gap-4 animate-fade-in overflow-y-auto">
@@ -29,57 +89,37 @@ export default function RiskIntelligence() {
                         <p className="text-xs text-text-muted">AI-powered threat assessment, pressure analysis & prediction</p>
                     </div>
                 </div>
+                {isLoading && <Loader2 size={16} className="text-cyan animate-spin" />}
             </div>
 
             {/* Risk Overview Bar */}
             <div className="glass-card p-4 shrink-0">
                 <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-semibold text-text-primary">Overall Threat Level</h3>
-                    <span className="text-xs text-warning font-bold px-3 py-1 rounded-full bg-warning/15">ELEVATED</span>
+                    <span className={`text-xs font-bold px-3 py-1 rounded-full bg-bg-primary/50 border border-border ${riskColor}`}>
+                        {overallRisk.level}
+                    </span>
                 </div>
                 <div className="w-full h-2 rounded-full bg-bg-primary flex overflow-hidden">
-                    <div className="h-full bg-success" style={{ width: '20%' }} />
-                    <div className="h-full bg-warning" style={{ width: '35%' }} />
-                    <div className="h-full bg-danger" style={{ width: '30%' }} />
-                    <div className="h-full bg-bg-primary" style={{ width: '15%' }} />
+                    <div className="h-full bg-success" style={{ width: `${Math.min(100, overallRisk.score < 0.25 ? overallRisk.score * 400 : 25)}%` }} />
+                    <div className="h-full bg-warning" style={{ width: `${Math.max(0, Math.min(25, overallRisk.score >= 0.25 ? (overallRisk.score - 0.25) * 400 : 0))}%` }} />
+                    <div className="h-full bg-danger" style={{ width: `${Math.max(0, Math.min(50, overallRisk.score >= 0.5 ? (overallRisk.score - 0.5) * 200 : 0))}%` }} />
                 </div>
                 <div className="flex justify-between mt-2 text-[10px] text-text-muted">
-                    <span>Low (1 zone)</span>
-                    <span>Medium (2 zones)</span>
-                    <span>High (1 zone)</span>
-                    <span>Critical (1 zone)</span>
+                    <span>Low</span>
+                    <span>Medium</span>
+                    <span>High</span>
+                    <span>Critical</span>
                 </div>
             </div>
 
-            {/* Crowd Flow Visualization — from mind map */}
+            {/* Crowd Flow Visualization */}
             <div className="shrink-0">
                 <CrowdFlowVisualization />
             </div>
 
-            {/* Zone Risk Map Placeholder */}
-            <div className="glass-card p-4 shrink-0">
-                <div className="flex items-center gap-2 mb-3">
-                    <MapPin size={14} className="text-cyan" />
-                    <h3 className="text-sm font-semibold text-text-primary">Zone Risk Map</h3>
-                </div>
-                <div className="h-40 rounded-lg bg-bg-primary border border-border flex items-center justify-center relative overflow-hidden">
-                    <div className="absolute inset-0 opacity-10"
-                        style={{
-                            backgroundImage: 'linear-gradient(rgba(0,229,255,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(0,229,255,0.3) 1px, transparent 1px)',
-                            backgroundSize: '20px 20px',
-                        }}
-                    />
-                    {/* Simulated zone markers */}
-                    <div className="absolute top-[20%] left-[25%] w-16 h-16 rounded-full border-2 border-success/50 flex items-center justify-center text-[9px] text-success font-bold">A</div>
-                    <div className="absolute top-[30%] left-[50%] w-20 h-20 rounded-full border-2 border-danger/50 flex items-center justify-center text-[9px] text-danger font-bold animate-pulse">B</div>
-                    <div className="absolute top-[40%] left-[75%] w-14 h-14 rounded-full border-2 border-warning/50 flex items-center justify-center text-[9px] text-warning font-bold">C</div>
-                    <div className="absolute top-[60%] left-[35%] w-18 h-18 rounded-full border-2 border-warning/50 flex items-center justify-center text-[9px] text-warning font-bold">D</div>
-                    <div className="absolute top-[55%] left-[65%] w-16 h-16 rounded-full border-2 border-danger/50 flex items-center justify-center text-[9px] text-danger font-bold">E</div>
-                </div>
-            </div>
-
             {/* Risk Cards Grid */}
-            <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 pb-4">
+            <div className="grid grid-cols-2 xl:grid-cols-2 gap-3 pb-4">
                 {riskCards.map((card) => (
                     <RiskCard key={card.id} data={card} />
                 ))}

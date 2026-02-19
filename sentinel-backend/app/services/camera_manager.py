@@ -80,6 +80,10 @@ class CameraManager:
 
         # Demo frame counter
         self._demo_idx: int = 0
+        
+        # Async Bridge
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._frame_queue: Optional[asyncio.Queue] = None
 
     # ── Public API ──────────────────────────────────────────
 
@@ -106,11 +110,21 @@ class CameraManager:
         self.state = CameraState.STOPPED
         logger.info("camera_manager.stopped")
 
+    async def get_next_frame(self) -> np.ndarray:
+        """
+        Zero-Latency Access: Awaits the next frame directly from the background thread.
+        Uses an asyncio.Queue to bridge the sync thread -> async loop.
+        """
+        # Lazy initialization of the async bridge
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+            self._frame_queue = asyncio.Queue(maxsize=1)
+            
+        return await self._frame_queue.get()
+
     async def get_frame(self) -> Tuple[np.ndarray, bool]:
         """
-        NON-BLOCKING. Returns (frame, is_demo).
-        If camera connected and frame fresh → real frame.
-        Otherwise → synthetic demo frame.
+        Legacy Polling API (for HTTP endpoints).
         """
         # Fast path: camera is live and frame is fresh (< 2s old)
         if (
@@ -166,6 +180,13 @@ class CameraManager:
                         self.latest_frame = frame
                         self.frame_id += 1
                         self.last_frame_time = time.time()
+                        
+                        # ZERO-LATENCY SIGNAL
+                        # Notify the async loop immediately
+                        if self._loop and self._frame_queue:
+                            self._loop.call_soon_threadsafe(
+                                self._async_put_frame_nowait, frame
+                            )
                 else:
                     # Camera returned empty frame — likely disconnected
                     logger.warning("camera_manager.empty_frame")
@@ -214,36 +235,53 @@ class CameraManager:
             return None
 
         source_int = int(source)
-        # On Windows: DirectShow is fastest, then MSMF, then default
-        backends = [
-            (cv2.CAP_DSHOW, "DirectShow"),
-            (cv2.CAP_MSMF, "MediaFoundation"),
-        ]
-
-        for backend_id, backend_name in backends:
+        
+        # Senior Backend Fix: 
+        # 1. Always use CAP_DSHOW for Windows webcams (avoids MSMF hangs)
+        # 2. Retry loop because camera driver might be busy/locked
+        
+        # We try DSHOW 3 times with a delay
+        for attempt in range(3):
             if self._stop_event.is_set():
                 return None
-
-            logger.info("camera_manager.trying", backend=backend_name)
+                
+            logger.info("camera_manager.trying", backend="DirectShow", attempt=attempt+1)
+            
             try:
                 # Run in a separate thread with timeout
                 future = _cam_executor.submit(
-                    self._open_single_backend, source_int, backend_id
+                    self._open_single_backend, source_int, cv2.CAP_DSHOW
                 )
                 cap = future.result(timeout=timeout)
                 if cap is not None:
-                    logger.info("camera_manager.backend_ok", backend=backend_name)
+                    logger.info("camera_manager.backend_ok", backend="DirectShow")
                     return cap
             except Exception as exc:
                 logger.debug(
-                    "camera_manager.backend_skip",
-                    backend=backend_name,
-                    reason=str(exc),
+                    "camera_manager.dshow_failed",
+                    attempt=attempt+1,
+                    error=str(exc),
                 )
-                # If timed out, the thread is still running — we can't
-                # cancel cv2.VideoCapture, but it's in a daemon thread
-                # that will be garbage collected eventually.
-                continue
+            
+            # Wait before retry (essential for driver release)
+            time.sleep(1.0)
+
+        # Fallback to MediaFoundation ONLY if DSHOW fails all attempts
+        # (Some older cams might require it, but we prioritize DSHOW)
+        if self._stop_event.is_set():
+            return None
+            
+        logger.info("camera_manager.trying_fallback", backend="MediaFoundation")
+        try:
+            future = _cam_executor.submit(
+                self._open_single_backend, source_int, cv2.CAP_MSMF
+            )
+            cap = future.result(timeout=timeout)
+            if cap is not None:
+                logger.info("camera_manager.backend_ok", backend="MediaFoundation")
+                return cap
+        except Exception:
+            pass
 
         return None
 
@@ -255,13 +293,44 @@ class CameraManager:
         try:
             cap = cv2.VideoCapture(source, backend)
             if cap.isOpened():
+                # Senior Hardening 1: Explicit Resolution & FPS
+                # Forces camera to a known good state (640x480 @ 30)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                cap.set(cv2.CAP_PROP_FPS, 30)
+                
+                # Senior Hardening 2: Warm-up Frames
+                # Discard initial frames (often black/auto-exposure adjusting)
+                for _ in range(5):
+                    cap.read()
+                
+                # Verify reading one real frame
                 ret, _ = cap.read()
                 if ret:
+                    # PRO LOGGING: confirming backend usage
+                    backend_name = cap.getBackendName()
+                    logger.info("camera_manager.opened_success", backend=backend_name)
                     return cap
+            
             cap.release()
         except Exception:
             pass
         return None
+
+    def _async_put_frame_nowait(self, frame: np.ndarray):
+        """Helper to put frame in queue from the event loop thread."""
+        if self._frame_queue is None:
+            return
+            
+        # Drop old frame if queue is full (latest-is-greatest)
+        if self._frame_queue.full():
+            try:
+                self._frame_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        
+        # Pass REFERENCE to frame (Zero Copy)
+        self._frame_queue.put_nowait(frame)
 
     # ── Demo Frame Generator ────────────────────────────────
 

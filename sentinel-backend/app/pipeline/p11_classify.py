@@ -39,47 +39,51 @@ class ClassifyStage(PipelineStage):
     def _classify(packet: FramePacket) -> tuple[str | None, str | None]:
         risk = packet.risk_score
         level = packet.risk_level
+        
+        # Behavioral metadata extracted in p10_risk
+        dir_consistency = packet.stage_latencies.get("behavior_dir_consistency", 1.0)
+        vel_variance = packet.stage_latencies.get("behavior_vel_variance", 0.0)
+        
+        # 1. EMERGENCY: Stampede Risk (Uniform direction, high speed/risk)
+        if level in ["CRITICAL", "HIGH"] and dir_consistency > 0.75 and packet.flow_magnitude > 8.0:
+            return "EMERGENCY", (
+                f"STAMPEDE RISK DETECTED. Uniform movement flow ({dir_consistency:.0%}) "
+                f"at high speed. Risk Score: {risk:.2f}."
+            )
 
-        # EMERGENCY: critical risk + anomaly
+        # 2. EMERGENCY: Panic Risk (Chaotic direction, high variance, high risk)
+        if level in ["CRITICAL", "HIGH"] and dir_consistency < 0.3 and vel_variance > 15.0:
+            return "EMERGENCY", (
+                f"PANIC / CHAOS DETECTED. Erratic movement patterns "
+                f"(variance={vel_variance:.1f}) in random directions. "
+                f"Risk Score: {risk:.2f}."
+            )
+
+        # 3. EMERGENCY: Critical risk with anomaly
         if level == "CRITICAL" and packet.is_anomaly:
             return "EMERGENCY", (
-                f"CRITICAL risk ({risk:.2f}) with anomaly detected "
-                f"(score={packet.anomaly_score:.2f}). "
-                f"Density={packet.density_count:.0f}, "
-                f"congestion={packet.congestion_score:.2f}."
+                f"ANOMALY DETECTED. Critical risk level ({risk:.2f}). "
+                f"Potential security or safety incident."
             )
 
-        # EMERGENCY: critical risk even without anomaly
+        # 4. EMERGENCY: General Critical
         if level == "CRITICAL":
-            return "EMERGENCY", (
-                f"CRITICAL risk ({risk:.2f}). "
-                f"Density={packet.density_count:.0f}, "
-                f"congestion zones={len(packet.congestion_zones)}."
-            )
+            return "EMERGENCY", f"CRITICAL safety risk ({risk:.2f}). Density: {packet.density_count:.0f}."
 
-        # DANGER: high risk
-        if level == "HIGH":
-            reason_parts = [f"HIGH risk ({risk:.2f})"]
-            if packet.is_anomaly:
-                reason_parts.append(f"anomaly score={packet.anomaly_score:.2f}")
-            if packet.congestion_zones:
-                reason_parts.append(
-                    f"{len(packet.congestion_zones)} congestion zones"
-                )
-            return "DANGER", ". ".join(reason_parts) + "."
+        # 5. DANGER: High risk or physical pressure
+        if level == "HIGH" or packet.pressure_score > 0.7:
+            reason = f"DANGER: High crowd pressure/risk ({risk:.2f})."
+            if packet.pressure_score > 0.7:
+                reason = f"PHYSICAL CRUSH RISK. High social force intensity detected."
+            return "DANGER", reason
 
-        # WARNING: medium risk
+        # 6. WARNING: Medium risk
         if level == "MEDIUM":
-            return "WARNING", (
-                f"MEDIUM risk ({risk:.2f}). "
-                f"Density={packet.density_count:.0f}."
-            )
+            return "WARNING", f"Elevated crowd risk ({risk:.2f}). Monitor flow levels."
 
-        # INFO: if density is noteworthy
-        if packet.density_count > 50:
-            return "INFO", (
-                f"Crowd density notable ({packet.density_count:.0f} persons)."
-            )
+        # 7. INFO: Notable density
+        if packet.density_count > 40:
+            return "INFO", f"High density area ({packet.density_count:.0f} persons)."
 
         # No alert
         return None, None

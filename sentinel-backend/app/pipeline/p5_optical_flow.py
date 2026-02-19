@@ -50,12 +50,12 @@ class OpticalFlowStage(PipelineStage):
             device = self.gpu.device if self.gpu else torch.device("cpu")
             model = model.to(device).eval()
 
-            # torch.compile for extra speed
-            try:
-                model = torch.compile(model, mode="reduce-overhead")
-                logger.info("optical_flow.torch_compiled")
-            except Exception:
-                pass
+            # torch.compile for extra speed (disabled for stability on Windows)
+            # try:
+            #     model = torch.compile(model, mode="reduce-overhead")
+            #     logger.info("optical_flow.torch_compiled")
+            # except Exception:
+            #     pass
 
             self._model = model
             self._use_raft = True

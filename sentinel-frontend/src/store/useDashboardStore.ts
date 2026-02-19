@@ -13,6 +13,18 @@ interface LiveMetrics {
     anomaly: number;
     flowMagnitude: number;
     trackCount: number;
+    pressure?: number;
+    collisions?: Array<{ x: number, y: number, force: number, label: string }>;
+}
+
+interface BehaviourMetrics {
+    tracked_entities: number;
+    behaviour_events: number;
+    anomalies_today: number;
+    ai_confidence: number;
+    distribution: Array<{ name: string; count: number; color: string }>;
+    radar: Array<{ subject: string; A: number; B: number }>;
+    timeline: Array<{ hour: string; anomalies: number; normal: number }>;
 }
 
 interface DashboardStore {
@@ -29,6 +41,7 @@ interface DashboardStore {
     backendConnected: boolean;
     backendCameraActive: boolean;
     liveMetrics: LiveMetrics | null;
+    behaviourMetrics: BehaviourMetrics | null;
 
     // Actions
     setMetrics: (metrics: MetricData[]) => void;
@@ -42,6 +55,7 @@ interface DashboardStore {
     setBackendConnected: (connected: boolean) => void;
     setBackendCameraActive: (active: boolean) => void;
     setLiveMetrics: (metrics: LiveMetrics) => void;
+    setBehaviourMetrics: (metrics: BehaviourMetrics) => void;
 }
 
 export const useDashboardStore = create<DashboardStore>((set) => ({
@@ -58,6 +72,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
     backendConnected: false,
     backendCameraActive: true,
     liveMetrics: null,
+    behaviourMetrics: null,
 
     // Actions
     setMetrics: (metrics) => set({ metrics }),
@@ -74,4 +89,5 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
     setBackendConnected: (connected) => set({ backendConnected: connected }),
     setBackendCameraActive: (active) => set({ backendCameraActive: active }),
     setLiveMetrics: (metrics) => set({ liveMetrics: metrics }),
+    setBehaviourMetrics: (metrics) => set({ behaviourMetrics: metrics }),
 }));

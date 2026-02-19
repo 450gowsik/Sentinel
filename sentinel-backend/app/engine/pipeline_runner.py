@@ -60,6 +60,7 @@ class PipelineRunner:
         from app.pipeline.p3_detection import DetectionStage
         from app.pipeline.p4_tracking import TrackingStage
         from app.pipeline.p5_optical_flow import OpticalFlowStage
+        from app.pipeline.p5_pressure import PressureStage
         from app.pipeline.p6_density import DensityStage
         from app.pipeline.p7_trajectory import TrajectoryStage
         from app.pipeline.p8_anomaly import AnomalyStage
@@ -69,15 +70,16 @@ class PipelineRunner:
         from app.pipeline.p12_safepath import SafePathStage
         from app.pipeline.p13_alert_gen import AlertGenStage
         from app.pipeline.p14_visualize import VisualizeStage
+        from app.pipeline.p15_persistence import PersistenceStage
 
         q = self.settings.max_queue_size
 
         # Create named buffers between stages
         buffer_names = [
             "acq→pre", "pre→det", "det→trk", "trk→flow",
-            "flow→den", "den→traj", "traj→anom", "anom→cong",
+            "flow→pres", "pres→den", "den→traj", "traj→anom", "anom→cong",
             "cong→risk", "risk→cls", "cls→path", "path→alert",
-            "alert→viz", "viz→out",
+            "alert→viz", "viz→pers", "pers→out",
         ]
         for name in buffer_names:
             self._buffers[name] = FrameBuffer(name=name, maxsize=q)
@@ -88,8 +90,9 @@ class PipelineRunner:
             (PreprocessStage,   "acq→pre",       "pre→det"),
             (DetectionStage,    "pre→det",       "det→trk"),
             (TrackingStage,     "det→trk",       "trk→flow"),
-            (OpticalFlowStage,  "trk→flow",      "flow→den"),
-            (DensityStage,      "flow→den",      "den→traj"),
+            (OpticalFlowStage,  "trk→flow",      "flow→pres"),
+            (PressureStage,     "flow→pres",     "pres→den"),
+            (DensityStage,      "pres→den",      "den→traj"),
             (TrajectoryStage,   "den→traj",      "traj→anom"),
             (AnomalyStage,      "traj→anom",     "anom→cong"),
             (CongestionStage,   "anom→cong",     "cong→risk"),
@@ -97,7 +100,8 @@ class PipelineRunner:
             (ClassifyStage,     "risk→cls",      "cls→path"),
             (SafePathStage,     "cls→path",      "path→alert"),
             (AlertGenStage,     "path→alert",    "alert→viz"),
-            (VisualizeStage,    "alert→viz",     "viz→out"),
+            (VisualizeStage,    "alert→viz",     "viz→pers"),
+            (PersistenceStage,  "viz→pers",      "pers→out"),
         ]
 
         for cls, in_name, out_name in stage_defs:
@@ -201,8 +205,83 @@ class PipelineRunner:
 
     @property
     def output_buffer(self) -> FrameBuffer:
-        """The final viz→out buffer for WebSocket consumers."""
-        return self._buffers["viz→out"]
+        """The final pers→out buffer for WebSocket consumers."""
+        return self._buffers["pers→out"]
+
+    # ── One-Shot / Upload Processing ─────────────────────
+
+    async def process_single_frame(self, frame: np.ndarray, camera_id: str = "upload") -> FramePacket:
+        """Process a single image through the full AI pipeline."""
+        from app.schemas.frame import FrameMetadata, FramePacket
+        import numpy as np
+        
+        h, w = frame.shape[:2]
+        packet = FramePacket(
+            meta=FrameMetadata(
+                camera_id=camera_id,
+                frame_idx=0,
+                timestamp=time.time(),
+                width=w,
+                height=h,
+                fps=0,
+            ),
+            frame=frame,
+        )
+
+        # Skip acquisition [0], use the rest
+        # We also skip Tracking [3] for single images as it needs history
+        # We skip Persistence [14] to avoid duplicate saves (detect.py handles archival)
+        for stage in self._stages[1:]:
+            if stage.name in ["p4_tracking", "p15_persistence"]:
+                continue
+            packet = await stage.process(packet)
+            
+        return packet
+
+    async def process_video_sequence(self, frames: list[np.ndarray], camera_id: str = "upload_video"):
+        """Process a sequence of frames (video) through the full AI pipeline.
+        
+        Creates a transient TrackingStage to avoid state contamination with live feed.
+        """
+        from app.schemas.frame import FrameMetadata, FramePacket
+        from app.pipeline.p4_tracking import TrackingStage
+        
+        # Instantiate a private tracker for this video
+        private_tracker = TrackingStage(
+            gpu_manager=self.gpu,
+            redis=self.redis,
+            settings=self.settings
+        )
+        await private_tracker.setup()
+
+        results = []
+        for i, frame in enumerate(frames):
+            h, w = frame.shape[:2]
+            packet = FramePacket(
+                meta=FrameMetadata(
+                    camera_id=camera_id,
+                    frame_idx=i,
+                    timestamp=time.time(),
+                    width=w,
+                    height=h,
+                    fps=25,
+                ),
+                frame=frame,
+            )
+
+            # Process through all stages, substituting the private tracker
+            # Skip Persistence [14] to avoid duplicate saves (detect.py handles archival)
+            for stage in self._stages[1:]:
+                if stage.name == "p4_tracking":
+                    packet = await private_tracker.process(packet)
+                elif stage.name == "p15_persistence":
+                    continue
+                else:
+                    packet = await stage.process(packet)
+            
+            results.append(packet)
+            
+        return results
 
     # ── Diagnostics ──────────────────────────────────────
 

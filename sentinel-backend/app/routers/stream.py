@@ -27,7 +27,7 @@ class StreamConfig(BaseModel):
     camera_id: str = "cam_0"
 
 
-@router.post("/stream/config")
+@router.post("/api/v1/stream/config")
 async def config_stream(config: StreamConfig):
     """Configure the pipeline source (e.g., set IP camera URL)."""
     runner = get_pipeline_runner()
@@ -134,11 +134,13 @@ async def stream_ws(websocket: WebSocket, camera_id: str):
                     "tracks": len(packet.tracks),
                     "fps": round(current_fps, 1),
                     "flow_magnitude": round(packet.flow_magnitude, 2),
+                    "pressure": packet.pressure_score,
+                    "collisions": packet.collision_points,
                 },
             }
 
             try:
-                await websocket.send_bytes(orjson.dumps(message))
+                await websocket.send_text(orjson.dumps(message).decode("utf-8"))
                 ws_frames_sent.labels(camera_id=camera_id).inc()
             except Exception:
                 break

@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     max_queue_size: int = 30
     frame_skip_heavy: int = 3
     enable_visualization: bool = True
+    persistence_interval_seconds: int = 5
 
     # ── Redis ────────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379/0"

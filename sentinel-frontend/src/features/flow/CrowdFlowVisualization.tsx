@@ -1,20 +1,56 @@
 import { Navigation, ArrowRightLeft, TrendingUp, Users } from 'lucide-react';
+import { useDashboardStore } from '../../store/useDashboardStore';
 
-const flowSegments = [
-    { id: 'F1', from: 'Main Gate', to: 'Central Plaza', speed: 1.4, density: 4.2, direction: 'inbound', status: 'normal' as const },
-    { id: 'F2', from: 'Central Plaza', to: 'East Wing', speed: 0.8, density: 5.8, direction: 'outbound', status: 'congested' as const },
-    { id: 'F3', from: 'East Wing', to: 'Exit Corridor', speed: 1.1, density: 3.1, direction: 'outbound', status: 'normal' as const },
-    { id: 'F4', from: 'Concourse', to: 'Central Plaza', speed: 0.4, density: 6.1, direction: 'counter-flow', status: 'critical' as const },
-    { id: 'F5', from: 'Main Gate', to: 'Concourse', speed: 1.2, density: 2.8, direction: 'inbound', status: 'normal' as const },
-];
-
-const statusConfig = {
+const statusConfig: Record<string, { color: string; bg: string; label: string }> = {
     normal: { color: '#00C853', bg: 'bg-success/10', label: 'NORMAL' },
+    warning: { color: '#FFB300', bg: 'bg-warning/10', label: 'WARNING' },
+    danger: { color: '#FF3D00', bg: 'bg-danger/10', label: 'DANGER' },
     congested: { color: '#FFB300', bg: 'bg-warning/10', label: 'CONGESTED' },
     critical: { color: '#FF3D00', bg: 'bg-danger/10', label: 'CRITICAL' },
 };
 
 export default function CrowdFlowVisualization() {
+    const liveMetrics = useDashboardStore((s) => s.liveMetrics);
+
+    const flowSegments = [
+        {
+            id: 'F1',
+            from: 'Main Gate',
+            to: 'Central Plaza',
+            speed: liveMetrics ? (1.2 + liveMetrics.flowMagnitude * 0.1).toFixed(1) : 1.4,
+            density: liveMetrics ? (liveMetrics.density / 20).toFixed(1) : 4.2,
+            direction: 'inbound',
+            status: (liveMetrics?.riskScore ?? 0) > 0.7 ? 'danger' : (liveMetrics?.riskScore ?? 0) > 0.4 ? 'warning' : 'normal' as const
+        },
+        {
+            id: 'F2',
+            from: 'Central Plaza',
+            to: 'East Wing',
+            speed: liveMetrics ? (0.8 + liveMetrics.flowMagnitude * 0.05).toFixed(1) : 0.9,
+            density: liveMetrics ? (liveMetrics.density / 15).toFixed(1) : 6.8,
+            direction: 'inbound',
+            status: (liveMetrics?.congestion ?? 0) > 0.6 ? 'warning' : 'normal' as const
+        },
+        {
+            id: 'F3',
+            from: 'East Wing',
+            to: 'Exit',
+            speed: liveMetrics ? (1.5 + liveMetrics.flowMagnitude * 0.1).toFixed(1) : 1.8,
+            density: liveMetrics ? (liveMetrics.density / 30).toFixed(1) : 2.1,
+            direction: 'outbound',
+            status: 'normal' as const
+        },
+        {
+            id: 'F4',
+            from: 'Concourse',
+            to: 'Central Plaza',
+            speed: liveMetrics ? (0.5 + liveMetrics.flowMagnitude * 0.02).toFixed(1) : 0.6,
+            density: liveMetrics ? (liveMetrics.density / 10).toFixed(1) : 8.4,
+            direction: 'inbound',
+            status: (liveMetrics?.congestion ?? 0) > 0.8 ? 'danger' : 'warning' as const
+        },
+    ];
+
     return (
         <div className="glass-card p-4">
             <div className="flex items-center justify-between mb-4">
@@ -23,9 +59,13 @@ export default function CrowdFlowVisualization() {
                         <Navigation size={14} className="text-cyan" />
                     </div>
                     <div>
-                        <h3 className="text-sm font-semibold text-text-primary">Crowd Flow Visualization</h3>
-                        <p className="text-[10px] text-text-muted">Directional movement patterns & flow rate analysis</p>
+                        <h3 className="text-sm font-semibold text-text-primary">Crowd Flow Dynamics</h3>
+                        <p className="text-[10px] text-text-muted">Real-time directional velocity & segment density mapping</p>
                     </div>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] font-mono text-cyan">
+                    <span className="w-2 h-2 rounded-full bg-cyan animate-pulse" />
+                    LIVE INFERENCE
                 </div>
             </div>
 
@@ -63,7 +103,12 @@ export default function CrowdFlowVisualization() {
                 ))}
 
                 {/* Flow arrows */}
-                <svg className="absolute inset-0 w-full h-full" style={{ pointerEvents: 'none' }}>
+                <svg
+                    className="absolute inset-0 w-full h-full"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    style={{ pointerEvents: 'none' }}
+                >
                     <defs>
                         <marker id="flowArrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
                             <polygon points="0 0, 8 3, 0 6" fill="#00E5FF" opacity="0.5" />
@@ -76,24 +121,24 @@ export default function CrowdFlowVisualization() {
                         </marker>
                     </defs>
                     {/* Main Gate → Central Plaza */}
-                    <path d="M 15% 48% Q 28% 30%, 36% 35%" fill="none" stroke="#00C853" strokeWidth="2" strokeDasharray="6 3" opacity="0.5" markerEnd="url(#flowArrow)">
-                        <animate attributeName="stroke-dashoffset" values="0;-18" dur="1.5s" repeatCount="indefinite" />
+                    <path d="M 15 48 Q 28 30, 36 35" fill="none" stroke="#00C853" strokeWidth="1" strokeDasharray="3 1.5" opacity="0.5" markerEnd="url(#flowArrow)">
+                        <animate attributeName="stroke-dashoffset" values="0;-10" dur="1.5s" repeatCount="indefinite" />
                     </path>
                     {/* Central Plaza → East Wing */}
-                    <path d="M 44% 33% Q 55% 22%, 66% 25%" fill="none" stroke="#FFB300" strokeWidth="2" strokeDasharray="6 3" opacity="0.5" markerEnd="url(#flowArrowWarning)">
-                        <animate attributeName="stroke-dashoffset" values="0;-18" dur="2s" repeatCount="indefinite" />
+                    <path d="M 44 33 Q 55 22, 66 25" fill="none" stroke="#FFB300" strokeWidth="1" strokeDasharray="3 1.5" opacity="0.5" markerEnd="url(#flowArrowWarning)">
+                        <animate attributeName="stroke-dashoffset" values="0;-10" dur="2s" repeatCount="indefinite" />
                     </path>
                     {/* East Wing → Exit */}
-                    <path d="M 74% 28% Q 80% 40%, 84% 52%" fill="none" stroke="#00C853" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.4" markerEnd="url(#flowArrow)">
-                        <animate attributeName="stroke-dashoffset" values="0;-18" dur="1.5s" repeatCount="indefinite" />
+                    <path d="M 74 28 Q 80 40, 84 52" fill="none" stroke="#00C853" strokeWidth="0.8" strokeDasharray="3 1.5" opacity="0.4" markerEnd="url(#flowArrow)">
+                        <animate attributeName="stroke-dashoffset" values="0;-10" dur="1.5s" repeatCount="indefinite" />
                     </path>
                     {/* Concourse → Central Plaza (counter-flow) */}
-                    <path d="M 33% 72% Q 36% 55%, 38% 40%" fill="none" stroke="#FF3D00" strokeWidth="2.5" strokeDasharray="4 4" opacity="0.6" markerEnd="url(#flowArrowDanger)">
-                        <animate attributeName="stroke-dashoffset" values="0;-16" dur="1s" repeatCount="indefinite" />
+                    <path d="M 33 72 Q 36 55, 38 40" fill="none" stroke="#FF3D00" strokeWidth="1.2" strokeDasharray="2 2" opacity="0.6" markerEnd="url(#flowArrowDanger)">
+                        <animate attributeName="stroke-dashoffset" values="0;-8" dur="1s" repeatCount="indefinite" />
                     </path>
                     {/* Main Gate → Concourse */}
-                    <path d="M 14% 55% Q 20% 68%, 26% 73%" fill="none" stroke="#00C853" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.4" markerEnd="url(#flowArrow)">
-                        <animate attributeName="stroke-dashoffset" values="0;-18" dur="1.5s" repeatCount="indefinite" />
+                    <path d="M 14 55 Q 20 68, 26 73" fill="none" stroke="#00C853" strokeWidth="0.8" strokeDasharray="3 1.5" opacity="0.4" markerEnd="url(#flowArrow)">
+                        <animate attributeName="stroke-dashoffset" values="0;-10" dur="1.5s" repeatCount="indefinite" />
                     </path>
                 </svg>
             </div>

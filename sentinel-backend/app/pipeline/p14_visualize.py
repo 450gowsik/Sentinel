@@ -138,7 +138,29 @@ class VisualizeStage(PipelineStage):
             0.55, risk_color, 1, cv2.LINE_AA,
         )
 
-        # 5. Alert badge
+        # 5. Social Force Collision Points
+        for cp in packet.collision_points:
+            cx, cy = int(cp["x"]), int(cp["y"])
+            force = cp["force"]
+            label = cp["label"]
+            
+            # Pulsing color based on force
+            pulse_color = (0, 0, 255) if force > 150 else (0, 165, 255) # Red for high force, Orange for medium
+            
+            # Draw cross/target
+            size = 8
+            cv2.line(canvas, (cx - size, cy), (cx + size, cy), pulse_color, 2)
+            cv2.line(canvas, (cx, cy - size), (cx, cy + size), pulse_color, 2)
+            cv2.circle(canvas, (cx, cy), size + 2, pulse_color, 1)
+            
+            # Label
+            cv2.putText(
+                canvas, f"{label}: {force}N",
+                (cx + 10, cy + 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, pulse_color, 1, cv2.LINE_AA
+            )
+
+        # 6. Alert badge
         if packet.alert_tier:
             badge_text = f"⚠ {packet.alert_tier}"
             cv2.putText(

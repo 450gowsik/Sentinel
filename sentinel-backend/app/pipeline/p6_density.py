@@ -84,11 +84,11 @@ class DensityStage(PipelineStage):
         except Exception as exc:
             logger.warning("density.no_weights — using random init", error=str(exc))
 
-        # torch.compile
-        try:
-            model = torch.compile(model, mode="reduce-overhead")
-        except Exception:
-            pass
+        # torch.compile (disabled for stability on Windows)
+        # try:
+        #     model = torch.compile(model, mode="reduce-overhead")
+        # except Exception:
+        #     pass
 
         self._model = model
         if self.gpu:

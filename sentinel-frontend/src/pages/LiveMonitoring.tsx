@@ -54,8 +54,8 @@ export default function LiveMonitoring() {
                         <button
                             onClick={() => setBackendCameraActive(!backendCameraActive)}
                             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-[10px] font-bold transition-all ${backendCameraActive
-                                    ? 'bg-danger/20 text-danger border border-danger/30'
-                                    : 'bg-success/20 text-success border border-success/30'
+                                ? 'bg-danger/20 text-danger border border-danger/30'
+                                : 'bg-success/20 text-success border border-success/30'
                                 }`}
                         >
                             {backendCameraActive ? (
@@ -82,6 +82,21 @@ export default function LiveMonitoring() {
                             className="flex items-center gap-1 bg-cyan text-bg-primary px-3 py-1 rounded text-xs font-bold hover:bg-cyan/90 disabled:opacity-50"
                         >
                             {isConfiguring ? '...' : <><Play size={10} /> Connect</>}
+                        </button>
+                    </div>
+
+                    {/* Mobile Sensor Helper */}
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => {
+                                const url = window.location.origin + window.location.pathname;
+                                navigator.clipboard.writeText(url);
+                                alert("Mobile Link Copied! Open this URL on your phone and select 'MOBILE SENSOR'.");
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-bold bg-bg-primary/50 border border-border text-text-muted hover:text-cyan transition-all"
+                            title="Copy link to open on phone"
+                        >
+                            <Smartphone size={12} /> CONNECT MOBILE
                         </button>
                     </div>
 

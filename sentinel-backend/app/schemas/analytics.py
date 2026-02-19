@@ -63,3 +63,20 @@ class GPUStatus(BaseModel):
     utilization_pct: float = 0.0
     temperature_c: float = 0.0
     models_loaded: list[str] = Field(default_factory=list)
+
+
+class BehaviourDistribution(BaseModel):
+    name: str
+    count: int
+    color: str
+
+
+class BehaviourAnalyticsResponse(BaseModel):
+    """Aggregated behaviour metrics snapshot."""
+    tracked_entities: int
+    behaviour_events: int
+    anomalies_today: int
+    ai_confidence: float
+    distribution: list[BehaviourDistribution]
+    radar: list[dict]
+    timeline: list[dict]

@@ -100,6 +100,8 @@ export function useBackendStream(cameraId = 'cam_0') {
                 anomaly: m.anomaly,
                 flowMagnitude: m.flow_magnitude,
                 trackCount: m.tracks,
+                pressure: m.pressure,
+                collisions: m.collisions,
             });
 
             // Update metric cards with live data

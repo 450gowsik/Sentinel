@@ -1,9 +1,9 @@
-import { Eye, Wifi, WifiOff, Camera, AlertTriangle, Monitor, Smartphone, Power } from 'lucide-react';
+import { Eye, Wifi, WifiOff, Camera, AlertTriangle, Monitor, Smartphone, Play, Pause, Square } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 // WebSocket URLs
 const WS_BASE = import.meta.env.VITE_WS_URL || `ws://${window.location.host}`;
-const WS_URL = `${WS_BASE}/ws/live/cam_0`;
+const WS_URL = `${WS_BASE}/ws/stream/cam_0`;
 
 type CameraSource = 'backend' | 'browser';
 type CameraPermission = 'prompt' | 'granted' | 'denied' | 'unavailable';
@@ -21,6 +21,8 @@ interface StreamMetadata {
     tracks: number;
     fps: number;
     flow_magnitude: number;
+    pressure?: number;
+    collisions?: Array<{ x: number, y: number, force: number, label: string }>;
 }
 
 interface CameraAlert {
@@ -36,17 +38,21 @@ import { useDashboardStore } from '../../store/useDashboardStore';
 export default function YOLODetectionOverlay() {
     const backendCameraActive = useDashboardStore((s) => s.backendCameraActive);
 
+    // ── Device Detection ──────────────────────────────────
+    const [isMobile] = useState(() => /iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+
     // Stream state
     const [imageSrc, setImageSrc] = useState<string | null>(null);
     const [metadata, setMetadata] = useState<StreamMetadata | null>(null);
+    const setLiveMetrics = useDashboardStore((s) => s.setLiveMetrics);
     const [status, setStatus] = useState<ConnectionStatus>('connecting');
     const [isDemoMode, setIsDemoMode] = useState(false);
 
     // Camera source state: Default to BACKEND (Server)
     const [cameraSource, setCameraSource] = useState<CameraSource>('backend');
     const [isStopped, setIsStopped] = useState(false);
+    const [isPaused, setIsPaused] = useState(false);
     const [alert, setAlert] = useState<CameraAlert | null>(null);
-    const [browserCamActive, setBrowserCamActive] = useState(false);
 
     // Refs
     const wsRef = useRef<WebSocket | null>(null);
@@ -100,11 +106,17 @@ export default function YOLODetectionOverlay() {
         if (isDestroyedRef.current || isStopped || !backendCameraActive) return;
 
         setStatus('connecting');
+        setImageSrc(null); // Reset image when switching
 
         connectTimeoutRef.current = window.setTimeout(() => {
-            if (isDestroyedRef.current || isStopped || !backendCameraActive) return;
+            if (isDestroyedRef.current || isStopped) return;
 
-            const ws = new WebSocket(WS_URL);
+            // Select endpoint based on source
+            const url = cameraSource === 'browser'
+                ? `${WS_BASE}/ws/live/browser/cam_0?token=sentinel_demo_token`
+                : WS_URL;
+
+            const ws = new WebSocket(url);
             wsRef.current = ws;
 
             ws.onopen = () => {
@@ -123,13 +135,29 @@ export default function YOLODetectionOverlay() {
                     const data = JSON.parse(event.data);
 
                     if (data.type === 'frame') {
-                        if (cameraSource === 'backend') {
-                            if (data.frame_b64) {
-                                setImageSrc(`data:image/jpeg;base64,${data.frame_b64}`);
-                            }
-                            setMetadata(data.metadata);
-                            setIsDemoMode(data.demo_mode ?? false);
+                        if (isPaused) return; // Skip updates if paused
+
+                        if (data.frame_b64) {
+                            setImageSrc(`data:image/jpeg;base64,${data.frame_b64}`);
                         }
+                        if (data.metadata) {
+                            setMetadata(data.metadata);
+                            setLiveMetrics({
+                                fps: data.metadata.fps,
+                                latencyMs: data.metadata.latency_ms,
+                                personCount: data.metadata.person_count,
+                                riskScore: data.metadata.risk_score,
+                                riskLevel: data.metadata.risk_level,
+                                density: data.metadata.density,
+                                congestion: data.metadata.congestion,
+                                anomaly: data.metadata.anomaly,
+                                flowMagnitude: data.metadata.flow_magnitude,
+                                trackCount: data.metadata.tracks,
+                                pressure: data.metadata.pressure,
+                                collisions: data.metadata.collisions,
+                            });
+                        }
+                        setIsDemoMode(data.demo_mode ?? false);
                     }
                 } catch (e) {
                     // ignore
@@ -139,7 +167,7 @@ export default function YOLODetectionOverlay() {
             ws.onclose = () => {
                 if (isDestroyedRef.current) return;
                 setStatus('disconnected');
-                if (!isStopped && cameraSource === 'backend' && backendCameraActive) {
+                if (!isStopped && (cameraSource === 'backend' ? backendCameraActive : true)) {
                     reconnectTimeoutRef.current = window.setTimeout(() => connectWS(), 3000);
                 }
             };
@@ -161,7 +189,6 @@ export default function YOLODetectionOverlay() {
             clearInterval(captureIntervalRef.current);
             captureIntervalRef.current = null;
         }
-        setBrowserCamActive(false);
     }, []);
 
     const startBrowserCamera = useCallback(async () => {
@@ -182,12 +209,37 @@ export default function YOLODetectionOverlay() {
             });
 
             streamRef.current = stream;
-            setBrowserCamActive(true);
             setAlert(null);
 
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
                 await videoRef.current.play();
+
+                // Start capture loop
+                let lastCapture = 0;
+                captureIntervalRef.current = window.setInterval(() => {
+                    if (!videoRef.current || !canvasRef.current || !wsRef.current) return;
+                    if (wsRef.current.readyState !== WebSocket.OPEN) return;
+
+                    const now = Date.now();
+                    if (now - lastCapture < 100) return; // Cap at 10 FPS for browser transmission
+                    lastCapture = now;
+
+                    const canvas = canvasRef.current;
+                    const video = videoRef.current;
+                    const context = canvas.getContext('2d');
+                    if (!context) return;
+
+                    canvas.width = 640;
+                    canvas.height = 480;
+                    context.drawImage(video, 0, 0, 640, 480);
+
+                    const frameBase64 = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+                    wsRef.current.send(JSON.stringify({
+                        type: 'browser_frame',
+                        frame_b64: frameBase64
+                    }));
+                }, 50);
             }
 
         } catch (err: any) {
@@ -226,21 +278,31 @@ export default function YOLODetectionOverlay() {
     // ── Switch Source ──────────────────────────────────────
     const switchToSource = useCallback(async (source: CameraSource) => {
         if (source === 'browser') {
-            const perm = await checkCameraPermission();
-            if (perm === 'granted' || perm === 'prompt') {
+            if (isMobile) {
+                // On mobile: become the sensor (PUBLISH)
+                const perm = await checkCameraPermission();
+                if (perm === 'granted' || perm === 'prompt') {
+                    setCameraSource(source);
+                    setIsStopped(false);
+                    startBrowserCamera();
+                } else {
+                    setAlert({ type: 'error', title: 'Permission Issue', message: 'Camera permission denied.' });
+                }
+            } else {
+                // On laptop: become the dashboard for mobile (SUBSCRIBE)
+                stopBrowserCamera();
                 setCameraSource(source);
                 setIsStopped(false);
-                startBrowserCamera();
-            } else {
-                setAlert({ type: 'error', title: 'Permission Issue', message: 'Camera permission denied.' });
+                connectWS();
             }
         } else {
+            // BACKEND / SERVER mode
             stopBrowserCamera();
             setCameraSource(source);
             setIsStopped(false);
             connectWS();
         }
-    }, [checkCameraPermission, startBrowserCamera, stopBrowserCamera, connectWS]);
+    }, [checkCameraPermission, startBrowserCamera, stopBrowserCamera, connectWS, isMobile]);
 
     // ── Auto-Fallback Logic ───────────────────────────────
     useEffect(() => {
@@ -275,7 +337,7 @@ export default function YOLODetectionOverlay() {
 
         // ONLY auto-connect to backend if default is backend
         // This ensures NO camera requests happen on mount if user somehow sets default to browser (which we prevented)
-        if (!isStopped && cameraSource === 'backend' && backendCameraActive) {
+        if (!isStopped && (cameraSource === 'backend' ? backendCameraActive : true)) {
             connectWS();
         }
 
@@ -326,7 +388,7 @@ export default function YOLODetectionOverlay() {
                                 : 'text-text-muted hover:text-text-secondary'
                                 }`}
                         >
-                            <Monitor size={10} /> SERVER
+                            <Monitor size={10} /> LAPTOP AI
                         </button>
                         <button
                             onClick={() => switchToSource('browser')}
@@ -335,20 +397,41 @@ export default function YOLODetectionOverlay() {
                                 : 'text-text-muted hover:text-text-secondary'
                                 }`}
                         >
-                            <Smartphone size={10} /> DEVICE
+                            <Smartphone size={10} /> MOBILE SENSOR
                         </button>
                     </div>
 
-                    <button
-                        onClick={() => isStopped ? switchToSource(cameraSource) : stopAll()}
-                        className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium transition-all border ${isStopped
-                            ? 'bg-success/15 text-success border-success/30 hover:bg-success/25'
-                            : 'bg-danger/15 text-danger border-danger/30 hover:bg-danger/25'
-                            }`}
-                    >
-                        <Power size={10} />
-                        {isStopped ? 'Turn On' : 'Stop'}
-                    </button>
+                    <div className="flex items-center gap-1 bg-bg-primary/50 p-1 rounded-md border border-border">
+                        <button
+                            onClick={() => {
+                                if (isStopped) {
+                                    switchToSource(cameraSource);
+                                } else {
+                                    setIsStopped(false);
+                                    setIsPaused(false);
+                                }
+                            }}
+                            className={`p-1.5 rounded transition-all ${!isStopped && !isPaused ? 'bg-success text-bg-primary' : 'text-success hover:bg-success/10'}`}
+                            title="Start"
+                        >
+                            <Play size={10} fill={!isStopped && !isPaused ? 'currentColor' : 'none'} />
+                        </button>
+                        <button
+                            onClick={() => setIsPaused(!isPaused)}
+                            disabled={isStopped}
+                            className={`p-1.5 rounded transition-all ${isPaused ? 'bg-warning text-bg-primary' : 'text-warning hover:bg-warning/10 disabled:opacity-30'}`}
+                            title="Pause"
+                        >
+                            <Pause size={10} fill={isPaused ? 'currentColor' : 'none'} />
+                        </button>
+                        <button
+                            onClick={() => stopAll()}
+                            className={`p-1.5 rounded transition-all ${isStopped ? 'bg-danger text-bg-primary' : 'text-danger hover:bg-danger/10'}`}
+                            title="Stop"
+                        >
+                            <Square size={10} fill={isStopped ? 'currentColor' : 'none'} />
+                        </button>
+                    </div>
 
                     <div className="flex items-center gap-1 text-[10px]">
                         {status === 'connected' ? (
@@ -403,23 +486,34 @@ export default function YOLODetectionOverlay() {
                         </div>
                     )
                 ) : (
-                    <video
-                        ref={videoRef}
-                        className="w-full h-full object-contain"
-                        playsInline
-                        muted
-                        autoPlay
-                        style={{ display: browserCamActive ? 'block' : 'none' }}
-                    />
+                    <>
+                        {/* Processed Frame Overlay */}
+                        {imageSrc && (
+                            <img
+                                src={imageSrc}
+                                alt="Processed"
+                                className="absolute inset-0 w-full h-full object-contain z-10"
+                            />
+                        )}
+                        {/* Hidden Source Video */}
+                        <video
+                            ref={videoRef}
+                            className="w-full h-full object-contain"
+                            playsInline
+                            muted
+                            autoPlay
+                            style={{ opacity: imageSrc ? 0 : 1 }}
+                        />
+                    </>
                 )}
 
                 {/* Overlays */}
                 {isDemoMode && cameraSource === 'backend' && imageSrc && (
                     <div className="absolute top-2 left-2 px-2 py-0.5 rounded text-[9px] font-mono bg-warning/20 text-warning border border-warning/30">DEMO</div>
                 )}
-                {cameraSource === 'browser' && browserCamActive && (
+                {cameraSource === 'browser' && (
                     <div className="absolute top-2 right-2 px-2 py-0.5 rounded text-[9px] font-mono bg-cyan/20 text-cyan border border-cyan/30 flex items-center gap-1">
-                        <Camera size={8} /> DEVICE
+                        <Camera size={8} /> {isMobile ? 'DEVICE (SENSING)' : 'REMOTE MOBILE SENSOR'}
                     </div>
                 )}
 
@@ -430,6 +524,20 @@ export default function YOLODetectionOverlay() {
                         <span>Objects: {metadata?.person_count ?? 0}</span>
                     </div>
                 </div>
+
+                {/* Live Collision Markers */}
+                {metadata?.collisions?.map((cp, idx) => (
+                    <div
+                        key={idx}
+                        className="absolute flex flex-col items-center pointer-events-none"
+                        style={{ left: `${(cp.x / 640) * 100}%`, top: `${(cp.y / 480) * 100}%`, transform: 'translate(-50%, -50%)' }}
+                    >
+                        <div className="w-5 h-5 rounded-full border-2 border-danger/60 flex items-center justify-center bg-danger/10 animate-pulse">
+                            <AlertTriangle size={8} className="text-danger" />
+                        </div>
+                        <span className="text-[8px] text-danger font-mono mt-0.5">{cp.label}: {cp.force}N</span>
+                    </div>
+                ))}
             </div>
 
             {/* Metrics Grid */}
@@ -439,7 +547,7 @@ export default function YOLODetectionOverlay() {
                     { label: 'Risk Score', value: (metadata?.risk_score ?? 0).toFixed(2) },
                     { label: 'Density', value: (metadata?.density ?? 0).toFixed(1) },
                     { label: 'Congestion', value: (metadata?.congestion ?? 0).toFixed(2) },
-                    { label: 'Anomaly', value: (metadata?.anomaly ?? 0).toFixed(2) },
+                    { label: 'Pressure', value: (metadata?.pressure ?? 0).toFixed(2) + ' MPa' },
                 ].map((s, i) => (
                     <div key={i} className="p-2 rounded-lg bg-bg-primary/50 border border-border text-center">
                         <div className="text-sm font-bold text-cyan">{s.value}</div>

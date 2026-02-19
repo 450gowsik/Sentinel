@@ -7,11 +7,11 @@ import dns.resolver
 
 # Configure DNS to use Google DNS (bypass local DNS issues)
 # MUST BE DONE BEFORE IMPORTING MOTOR/PYMONGO
-try:
-    dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
-    dns.resolver.default_resolver.nameservers = ['8.8.8.8']
-except Exception as e:
-    print(f"Warning: Could not configure custom DNS resolver: {e}")
+# try:
+#     dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
+#     dns.resolver.default_resolver.nameservers = ['8.8.8.8']
+# except Exception as e:
+#     print(f"Warning: Could not configure custom DNS resolver: {e}")
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import ConnectionFailure

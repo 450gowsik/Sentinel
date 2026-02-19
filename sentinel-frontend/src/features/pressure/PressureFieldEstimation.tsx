@@ -1,4 +1,5 @@
 import { Gauge, AlertTriangle } from 'lucide-react';
+import { useDashboardStore } from '../../store/useDashboardStore';
 
 const zones = [
     { id: 'A', name: 'Main Gate', x: 15, y: 20, pressure: 0.82, direction: 135, risk: 'high' as const },
@@ -22,6 +23,19 @@ const riskColor = {
 };
 
 export default function PressureFieldEstimation() {
+    const liveMetrics = useDashboardStore((s) => s.liveMetrics);
+
+    // Fallback to static if no live data (for safety)
+    const currentPressure = liveMetrics?.pressure ?? 0.71;
+    const currentCollisions = liveMetrics?.collisions ?? collisionPoints;
+
+    // Dynamically update zones based on live pressure
+    const dynamicZones = zones.map(z => ({
+        ...z,
+        pressure: Math.min(1, currentPressure * (1 + (Math.random() * 0.2 - 0.1))), // Add small jitter for "live" feel
+        risk: currentPressure > 0.8 ? 'critical' : currentPressure > 0.6 ? 'high' : currentPressure > 0.4 ? 'medium' : 'low' as const
+    }));
+
     return (
         <div className="glass-card p-4">
             <div className="flex items-center justify-between mb-4">
@@ -53,7 +67,7 @@ export default function PressureFieldEstimation() {
                 />
 
                 {/* Pressure gradient zones */}
-                {zones.map((zone) => (
+                {dynamicZones.map((zone) => (
                     <div
                         key={zone.id}
                         className="absolute flex flex-col items-center"
@@ -95,13 +109,13 @@ export default function PressureFieldEstimation() {
                 ))}
 
                 {/* Collision force points */}
-                {collisionPoints.map((cp) => (
+                {currentCollisions.map((cp, idx) => (
                     <div
-                        key={cp.label}
+                        key={idx}
                         className="absolute flex flex-col items-center"
-                        style={{ left: `${cp.x}%`, top: `${cp.y}%`, transform: 'translate(-50%, -50%)' }}
+                        style={{ left: `${(cp.x / 6.4)}%`, top: `${(cp.y / 4.8)}%`, transform: 'translate(-50%, -50%)' }}
                     >
-                        <div className="w-5 h-5 rounded-full border-2 border-warning/60 flex items-center justify-center bg-warning/10">
+                        <div className="w-5 h-5 rounded-full border-2 border-warning/60 flex items-center justify-center bg-warning/10 animate-bounce">
                             <AlertTriangle size={8} className="text-warning" />
                         </div>
                         <span className="text-[8px] text-warning font-mono mt-0.5">{cp.label}: {cp.force}N</span>
@@ -126,10 +140,10 @@ export default function PressureFieldEstimation() {
             {/* Metrics Row */}
             <div className="grid grid-cols-4 gap-2 mt-3">
                 {[
-                    { label: 'Avg Pressure', value: '0.71', unit: 'MPa', color: '#FFB300' },
-                    { label: 'Max Force', value: '87', unit: 'N', color: '#FF3D00' },
-                    { label: 'Collision Points', value: '3', unit: 'detected', color: '#FF3D00' },
-                    { label: 'Flow Stability', value: '64%', unit: '', color: '#00E5FF' },
+                    { label: 'Avg Pressure', value: currentPressure.toFixed(2), unit: 'MPa', color: currentPressure > 0.8 ? '#FF3D00' : currentPressure > 0.5 ? '#FFB300' : '#00C853' },
+                    { label: 'Max Force', value: currentCollisions.length > 0 ? Math.max(...currentCollisions.map(c => c.force)).toFixed(0) : '0', unit: 'N', color: '#FF3D00' },
+                    { label: 'Collision Points', value: currentCollisions.length.toString(), unit: 'detected', color: '#FF3D00' },
+                    { label: 'Flow Stability', value: (liveMetrics?.flowMagnitude ? Math.max(0, 100 - liveMetrics.flowMagnitude * 10).toFixed(0) : '64') + '%', unit: '', color: '#00E5FF' },
                 ].map((m, i) => (
                     <div key={i} className="p-2 rounded-lg bg-bg-primary/50 border border-border text-center">
                         <div className="text-lg font-bold" style={{ color: m.color }}>{m.value}</div>

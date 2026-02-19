@@ -23,8 +23,14 @@ yolov8*.pt
 # Data
 data/input/*
 data/output/*
+data/uploads/
+*.mp4
+*.avi
+*.mov
+# (Note: we don't ignore all .json as package.json/tsconfig.json are vital)
 !data/input/.gitkeep
 !data/output/.gitkeep
+!data/uploads/.gitkeep
 
 # IDE
 .vscode/

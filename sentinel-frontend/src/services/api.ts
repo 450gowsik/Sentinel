@@ -55,6 +55,8 @@ export const analyticsApi = {
     getTrajectories: (cameraId = 'cam_0') =>
         api.get(`/trajectories?camera_id=${cameraId}`),
     getSafePath: (zoneId: string) => api.get(`/safepath/${zoneId}`),
+    getBehaviour: (cameraId = 'cam_0') =>
+        api.get(`/analytics/behaviour?camera_id=${cameraId}`),
 };
 
 // ── Pipeline / Infrastructure ───────────────────────────────
@@ -77,7 +79,8 @@ export const detectApi = {
 // ── Live Camera Stream ──────────────────────────────────────
 export const streamApi = {
     configure: (source: string, cameraId = 'cam_0') =>
-        axios.post('/live/config', { source, camera_id: cameraId }),
+        api.post('/live/config', { source, camera_id: cameraId }),
+    getStatus: () => api.get('/live/camera-status'),
 };
 
 // ── Health ──────────────────────────────────────────────────

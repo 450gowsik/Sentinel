@@ -1,26 +1,35 @@
 import cv2
 import time
 
-url = "http://10.1.3.175:8080/video"
-# Try both /video and /video.mjpeg as some apps use different endpoints
-urls = [
-    "http://10.1.3.175:8080/video",
-    "http://10.1.3.175:8080/video.mjpeg",
-    "http://10.1.3.175:8080/shot.jpg"
-]
+print("Testing camera access with cv2.CAP_DSHOW...")
 
-print("Testing OpenCV VideoCapture...")
-for u in urls:
-    print(f"Trying: {u}")
-    cap = cv2.VideoCapture(u)
-    if cap.isOpened():
-        print(f"SUCCESS: Connected to {u}")
+def test_cam():
+    # Try multiple times as per senior advice
+    for i in range(3):
+        print(f"Attempt {i+1}...")
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        
+        if not cap.isOpened():
+            print("  Failed to open camera.")
+            time.sleep(1)
+            continue
+            
+        print("  Camera opened successfully!")
+        
+        # Read a frame
         ret, frame = cap.read()
         if ret:
-            print(f"SUCCESS: Read frame {frame.shape}")
+            print(f"  Frame captured! Shape: {frame.shape}")
+            cap.release()
+            return True
         else:
-            print("FAILED: Could not read frame")
-        cap.release()
-    else:
-        print("FAILED: Could not open stream")
-    print("-" * 20)
+            print("  Camera opened but returned empty frame.")
+            cap.release()
+            time.sleep(1)
+            
+    print("All attempts failed.")
+    return False
+
+if __name__ == "__main__":
+    success = test_cam()
+    exit(0 if success else 1)

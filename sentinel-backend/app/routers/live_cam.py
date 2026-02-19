@@ -24,6 +24,10 @@ logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["live"])
 
+# Global storage for mobile sensor relay (Phone -> Laptop Dashboard)
+# camera_id -> { "frame_b64": str, "metadata": dict, "timestamp": float }
+_mobile_relays: dict[str, dict] = {}
+
 # ── YOLO Model (loaded lazily in thread pool) ──────────────
 _yolo_model = None
 _yolo_loading = False
@@ -58,7 +62,7 @@ class LiveConfig(BaseModel):
     camera_id: str = "cam_0"
 
 
-@router.post("/live/config")
+@router.post("/api/v1/live/config")
 async def configure_live(config: LiveConfig):
     """Set the camera source for the background manager."""
     try:
@@ -69,7 +73,7 @@ async def configure_live(config: LiveConfig):
         return {"status": "error", "error": str(e)}
 
 
-@router.get("/live/camera-status")
+@router.get("/api/v1/live/camera-status")
 async def camera_status():
     """
     Returns real-time camera status for frontend alerts.
@@ -207,6 +211,13 @@ async def browser_camera_stream(websocket: WebSocket, camera_id: str, token: Opt
                     "flow_magnitude": 0.0,
                     "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
                 },
+            }
+            
+            # Update Global Relay for dashboard subscribers
+            _mobile_relays[camera_id] = {
+                "frame_b64": result_b64,
+                "metadata": message["metadata"],
+                "timestamp": time.time()
             }
             
             try:
@@ -387,10 +398,30 @@ async def live_stream(websocket: WebSocket, camera_id: str):
     
     try:
         while True:
+            # CHECK FOR MOBILE RELAY FIRST
+            # If there's a recent frame from a mobile sensor for this ID, send it
+            relay = _mobile_relays.get(camera_id)
+            if relay and (time.time() - relay["timestamp"]) < 2.0:
+                message = {
+                    "type": "frame",
+                    "source": "mobile_sensor",
+                    "frame_b64": relay["frame_b64"],
+                    "metadata": relay["metadata"],
+                    "is_relay": True
+                }
+                await websocket.send_text(orjson.dumps(message).decode('utf-8'))
+                # Wait a bit to not spam if it's just a relay
+                await asyncio.sleep(0.05)
+                continue
+
             # Heartbeat/Receive Loop
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
+            try:
+                # Use a small timeout so we can check relay above
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=0.1)
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                continue
     except WebSocketDisconnect:
         pass
     finally:

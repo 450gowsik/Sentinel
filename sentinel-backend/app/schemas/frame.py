@@ -73,6 +73,11 @@ class FramePacket(BaseModel):
     # Phase 5 — optical flow magnitude
     flow_magnitude: float = 0.0
     flow_field: Optional[Any] = Field(default=None, exclude=True)      # np.ndarray
+    
+    # Phase 5 — pressure
+    pressure_score: float = 0.0
+    pressure_field: Optional[Any] = Field(default=None, exclude=True)  # np.ndarray
+    collision_points: list[dict] = Field(default_factory=list)         # List of {x, y, force, label}
 
     # Phase 6 — density
     density_count: float = 0.0

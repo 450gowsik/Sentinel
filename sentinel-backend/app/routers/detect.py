@@ -17,10 +17,12 @@ from datetime import datetime
 import cv2
 import numpy as np
 import structlog
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile, Depends
 from pydantic import BaseModel, Field
 
 from app.database.mongodb import mongodb
+from app.dependencies import get_pipeline_runner
+from app.schemas.frame import FramePacket
 
 logger = structlog.get_logger(__name__)
 
@@ -70,172 +72,59 @@ class VideoDetectionResult(BaseModel):
     saved_path: str = ""
 
 
-# ── Lazy model loader ────────────────────────────────────────
+# Removed local _get_yolo and _run_detection. Using PipelineRunner.
 
-_yolo_model = None
-
-
-def _get_yolo():
-    """Lazy-load YOLOv8n model."""
-    global _yolo_model
-    if _yolo_model is None:
-        try:
-            from ultralytics import YOLO
-            _yolo_model = YOLO("yolov8n.pt")
-            logger.info("detect.yolo_loaded", model="yolov8n.pt")
-        except Exception as exc:
-            logger.error("detect.yolo_load_failed", error=str(exc))
-            raise HTTPException(500, f"Model load failed: {exc}")
-    return _yolo_model
-
-
-# ── Core detection functions ─────────────────────────────────
-
-def _run_detection(frame: np.ndarray, frame_idx: int = 0) -> DetectionResult:
-    """Run YOLOv8n on a single frame and return annotated results."""
-    t0 = time.time()
-    model = _get_yolo()
-    h, w = frame.shape[:2]
-
-    # Run inference
-    results = model(frame, verbose=False, conf=0.30, iou=0.45)
-
+def _map_packet_to_result(packet: FramePacket) -> DetectionResult:
+    """Map internal FramePacket to public DetectionResult."""
+    # Bounding Boxes
     detections: list[DetectionBox] = []
-    for r in results:
-        if r.boxes is None:
-            continue
-        for box in r.boxes:
-            cls_id = int(box.cls[0])
-            conf = float(box.conf[0])
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            cls_name = model.names.get(cls_id, f"class_{cls_id}")
-            detections.append(DetectionBox(
-                x1=x1, y1=y1, x2=x2, y2=y2,
-                confidence=round(conf, 3),
-                class_name=cls_name,
-            ))
+    for det in packet.detections:
+        detections.append(DetectionBox(
+            x1=det.x1, y1=det.y1, x2=det.x2, y2=det.y2,
+            confidence=round(det.confidence, 3),
+            class_name="person" if det.class_id == 0 else f"class_{det.class_id}"
+        ))
 
-    person_dets = [d for d in detections if d.class_name == "person"]
-    person_count = len(person_dets)
+    # Base64 annotated image
+    annotated_b64 = ""
+    if packet.annotated_jpeg:
+        annotated_b64 = base64.b64encode(packet.annotated_jpeg).decode("ascii")
 
-    # ── Risk & density estimation ────────────────────────
-    density = person_count / max((w * h) / (640 * 480), 0.1)
-    risk_score = min(1.0, (person_count / 80) * 0.5 + (density / 5.0) * 0.3 + 0.1)
-
-    if risk_score > 0.8:
-        risk_level = "CRITICAL"
-    elif risk_score > 0.6:
-        risk_level = "HIGH"
-    elif risk_score > 0.35:
-        risk_level = "MEDIUM"
-    else:
-        risk_level = "LOW"
-
-    stampede_risk = min(100, person_count * 1.2 + density * 8)
-    flow_rate = person_count * 2.5 + np.random.uniform(-5, 5)
-    anomaly_score = 0.0
-
-    # ── Draw annotations on frame ────────────────────────
-    annotated = frame.copy()
-
-    # Draw bounding boxes
-    for det in detections:
-        color = (0, 229, 255) if det.class_name == "person" else (0, 165, 255)
-        if det.confidence < 0.5:
-            color = (0, 200, 255)
-        elif det.confidence < 0.7:
-            color = (0, 200, 83)
-        else:
-            color = (0, 229, 255)
-
-        pt1 = (int(det.x1), int(det.y1))
-        pt2 = (int(det.x2), int(det.y2))
-        cv2.rectangle(annotated, pt1, pt2, color, 2)
-
-        # Corner brackets
-        bracket_len = min(15, int((det.x2 - det.x1) * 0.3))
-        # Top-left
-        cv2.line(annotated, pt1, (pt1[0] + bracket_len, pt1[1]), color, 2)
-        cv2.line(annotated, pt1, (pt1[0], pt1[1] + bracket_len), color, 2)
-        # Top-right
-        cv2.line(annotated, (pt2[0], pt1[1]), (pt2[0] - bracket_len, pt1[1]), color, 2)
-        cv2.line(annotated, (pt2[0], pt1[1]), (pt2[0], pt1[1] + bracket_len), color, 2)
-        # Bottom-left
-        cv2.line(annotated, (pt1[0], pt2[1]), (pt1[0] + bracket_len, pt2[1]), color, 2)
-        cv2.line(annotated, (pt1[0], pt2[1]), (pt1[0], pt2[1] - bracket_len), color, 2)
-        # Bottom-right
-        cv2.line(annotated, pt2, (pt2[0] - bracket_len, pt2[1]), color, 2)
-        cv2.line(annotated, pt2, (pt2[0], pt2[1] - bracket_len), color, 2)
-
-        # Label
-        label = f"{det.class_name} {det.confidence:.0%}"
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-        cv2.rectangle(annotated, (pt1[0], pt1[1] - th - 6), (pt1[0] + tw + 4, pt1[1]), color, -1)
-        cv2.putText(annotated, label, (pt1[0] + 2, pt1[1] - 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1, cv2.LINE_AA)
-
-    # Status overlay
-    cv2.putText(annotated, f"SENTINEL AI // Persons: {person_count} // Risk: {risk_level}",
-                (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 229, 255), 1, cv2.LINE_AA)
-
-    # Encode annotated image
-    _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 92])
-    annotated_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
-
-    # ── Generate density heatmap ─────────────────────────
-    heatmap = np.zeros((h, w), dtype=np.float32)
-    for det in person_dets:
-        cx = int((det.x1 + det.x2) / 2)
-        cy = int((det.y1 + det.y2) / 2)
-        r = int(max(det.x2 - det.x1, det.y2 - det.y1) * 0.8)
-        cv2.circle(heatmap, (cx, cy), max(r, 20), 1.0, -1)
-
-    heatmap = cv2.GaussianBlur(heatmap, (0, 0), sigmaX=30)
-    if heatmap.max() > 0:
-        heatmap = (heatmap / heatmap.max() * 255).astype(np.uint8)
-    else:
-        heatmap = heatmap.astype(np.uint8)
-    heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-
-    # Overlay heatmap
-    overlay = cv2.addWeighted(frame, 0.6, heatmap_color, 0.4, 0)
-    _, hbuf = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 88])
-    heatmap_b64 = base64.b64encode(hbuf.tobytes()).decode("ascii")
-
-    inference_ms = (time.time() - t0) * 1000
-
-    # Congestion zones
-    grid_size = 3
-    cell_h, cell_w = h // grid_size, w // grid_size
-    congestion_zones = []
-    for gy in range(grid_size):
-        for gx in range(grid_size):
-            zone_dets = [d for d in person_dets
-                         if gx * cell_w <= (d.x1 + d.x2) / 2 < (gx + 1) * cell_w
-                         and gy * cell_h <= (d.y1 + d.y2) / 2 < (gy + 1) * cell_h]
-            if zone_dets:
-                congestion_zones.append({
-                    "zone": f"Grid-{gy}-{gx}",
-                    "x": gx * cell_w + cell_w // 2,
-                    "y": gy * cell_h + cell_h // 2,
-                    "count": len(zone_dets),
-                    "congestion": min(1.0, len(zone_dets) / 10),
-                })
+    # Heatmap Base64 (Using Density Map if available)
+    heatmap_b64 = ""
+    if packet.density_map is not None:
+        try:
+            h, w = packet.meta.height, packet.meta.width
+            dmap = packet.density_map
+            # Normalize and colormap
+            if dmap.max() > 0:
+                dmap = (dmap / dmap.max() * 255).astype(np.uint8)
+            else:
+                dmap = dmap.astype(np.uint8)
+            dmap_resized = cv2.resize(dmap, (w, h))
+            heatmap_color = cv2.applyColorMap(dmap_resized, cv2.COLORMAP_JET)
+            
+            # Blend with original frame
+            overlay = cv2.addWeighted(packet.frame, 0.6, heatmap_color, 0.4, 0)
+            _, hbuf = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            heatmap_b64 = base64.b64encode(hbuf).decode("ascii")
+        except Exception as exc:
+            logger.warning("detect.heatmap_failed", error=str(exc))
 
     return DetectionResult(
-        frame_idx=frame_idx,
-        person_count=person_count,
+        frame_idx=packet.meta.frame_idx,
+        person_count=len(packet.detections),
         detections=detections,
-        density_estimate=round(density, 2),
-        risk_score=round(risk_score, 3),
-        risk_level=risk_level,
-        anomaly_score=round(anomaly_score, 3),
-        stampede_risk=round(stampede_risk, 1),
-        flow_rate=round(max(0, flow_rate), 1),
-        congestion_zones=congestion_zones,
+        density_estimate=round(packet.density_count, 2),
+        risk_score=round(packet.risk_score, 3),
+        risk_level=packet.risk_level,
+        anomaly_score=round(packet.anomaly_score, 3),
+        stampede_risk=round(packet.flow_magnitude * 8.0, 1), # Approx from flow
+        flow_rate=round(packet.flow_magnitude, 1),
+        congestion_zones=packet.congestion_zones,
         annotated_image_b64=annotated_b64,
         heatmap_b64=heatmap_b64,
-        inference_time_ms=round(inference_ms, 1),
+        inference_time_ms=packet.total_latency_ms,
     )
 
 
@@ -247,13 +136,11 @@ MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
 
 @router.post("/upload", response_model=DetectionResult | VideoDetectionResult)
-async def upload_detect(file: UploadFile = File(...)):
-    """Upload an image or video for AI crowd detection analysis.
-
-    Supported formats:
-    - Images: JPEG, PNG, WebP, BMP
-    - Videos: MP4, AVI, MOV, WebM (processed frame-by-frame)
-    """
+async def upload_detect(
+    file: UploadFile = File(...),
+    runner=Depends(get_pipeline_runner)
+):
+    """Upload an image or video for unified 15-stage AI analysis."""
     content_type = file.content_type or ""
 
     # Read file
@@ -268,9 +155,9 @@ async def upload_detect(file: UploadFile = File(...)):
     result: DetectionResult | VideoDetectionResult
     
     if content_type in ALLOWED_IMAGE_TYPES or filename.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp")):
-        result = await _detect_image(data, loop)
+        result = await _detect_image(data, runner, loop)
     elif content_type in ALLOWED_VIDEO_TYPES or filename.lower().endswith((".mp4", ".avi", ".mov", ".webm")):
-        result = await _detect_video(data, loop)
+        result = await _detect_video(data, runner, loop)
     else:
         raise HTTPException(
             415,
@@ -408,25 +295,23 @@ async def _process_and_save(file: UploadFile, data: bytes, loop: asyncio.Abstrac
 
 
 
-async def _detect_image(data: bytes, loop: asyncio.AbstractEventLoop) -> DetectionResult:
-    """Process a single image."""
+async def _detect_image(data: bytes, runner, loop) -> DetectionResult:
+    """Process a single image through full pipeline."""
     arr = np.frombuffer(data, dtype=np.uint8)
     frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if frame is None:
         raise HTTPException(400, "Could not decode image")
 
-    result = await loop.run_in_executor(None, _run_detection, frame, 0)
-    return result
+    packet = await runner.process_single_frame(frame)
+    return _map_packet_to_result(packet)
 
 
-async def _detect_video(data: bytes, loop: asyncio.AbstractEventLoop) -> VideoDetectionResult:
-    """Process a video file (sample every Nth frame for speed)."""
+async def _detect_video(data: bytes, runner, loop) -> VideoDetectionResult:
+    """Process a video file through full pipeline sequence."""
     import tempfile
     import os
 
     t0 = time.time()
-
-    # Write to temp file for OpenCV
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     tmp.write(data)
     tmp.close()
@@ -437,27 +322,24 @@ async def _detect_video(data: bytes, loop: asyncio.AbstractEventLoop) -> VideoDe
             raise HTTPException(400, "Could not open video")
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30
-
-        # Sample strategy: process every Nth frame, max 30 frames
-        max_sample_frames = 30
+        
+        # Sample frames for processing
+        max_sample_frames = 20
         step = max(1, total_frames // max_sample_frames)
 
-        frames_results: list[DetectionResult] = []
+        batch_frames = []
         frame_idx = 0
-
         while True:
             ret, frame = cap.read()
-            if not ret:
-                break
-
+            if not ret: break
             if frame_idx % step == 0:
-                result = await loop.run_in_executor(None, _run_detection, frame, frame_idx)
-                frames_results.append(result)
-
+                batch_frames.append(frame)
             frame_idx += 1
-
         cap.release()
+        
+        # Run unified sequence (maintains isolated tracking state)
+        packets = await runner.process_video_sequence(batch_frames)
+        frames_results = [_map_packet_to_result(p) for p in packets]
 
     finally:
         os.unlink(tmp.name)
@@ -472,11 +354,11 @@ async def _detect_video(data: bytes, loop: asyncio.AbstractEventLoop) -> VideoDe
     return VideoDetectionResult(
         total_frames=total_frames,
         processed_frames=len(frames_results),
-        avg_person_count=round(sum(person_counts) / len(person_counts), 1),
-        max_person_count=max(person_counts),
-        avg_risk_score=round(sum(risk_scores) / len(risk_scores), 3),
+        avg_person_count=round(sum(person_counts) / len(person_counts), 1) if person_counts else 0,
+        max_person_count=max(person_counts) if person_counts else 0,
+        avg_risk_score=round(sum(risk_scores) / len(risk_scores), 3) if risk_scores else 0,
         peak_risk_score=round(peak_risk, 3),
-        peak_risk_level="CRITICAL" if peak_risk > 0.8 else "HIGH" if peak_risk > 0.6 else "MEDIUM" if peak_risk > 0.35 else "LOW",
+        peak_risk_level=frames_results[np.argmax(risk_scores)].risk_level if risk_scores else "LOW",
         frames=frames_results,
         processing_time_ms=round((time.time() - t0) * 1000, 1),
     )
